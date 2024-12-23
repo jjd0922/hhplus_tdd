@@ -11,6 +11,10 @@ import org.mockito.InjectMocks;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 @ExtendWith(MockitoExtension.class)
 public class PointServiceTest {
@@ -176,6 +180,57 @@ public class PointServiceTest {
         Assertions.assertThrows(IllegalArgumentException.class, () -> {
             sut.insertOrUpdate(1L);
         }, "마이너스 잔액입니다.");
+    }
+
+    @Test
+    void testLockConcurrency_whenSameUser() throws InterruptedException {
+        //given
+        int threadCnt = 10;
+        // 스레드 풀 생성
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCnt);
+
+        // 동시성 테스트 실행
+        for (int i = 0; i < threadCnt; i++) {
+            executorService.submit(() -> {
+                sut.pointHistoryInsert(new PointHistory(1L,1L,100L, TransactionType.CHARGE,10L));
+            });
+        }
+
+        executorService.shutdown();
+        executorService.awaitTermination(10, TimeUnit.SECONDS);
+
+        sut.insertOrUpdate(1L);
+
+        // then
+        // 결과 검증
+        Assertions.assertEquals(100L*10, sut.selectById(1L).point(), "값 일치 여부 체크");
+    }
+
+    @Test
+    void testLockConcurrency_whenOtherUser() throws InterruptedException {
+        //given
+        int threadCnt = 10;
+        // 스레드 풀 생성
+        ExecutorService executorService = Executors.newFixedThreadPool(threadCnt);
+
+        // 동시성 테스트 실행
+        for (int i = 0; i < threadCnt; i++) {
+            executorService.submit(() -> {
+                sut.pointHistoryInsert(new PointHistory(1L,1L,100L, TransactionType.CHARGE,10L));
+                sut.pointHistoryInsert(new PointHistory(2L,2L,200L, TransactionType.CHARGE,10L));
+            });
+        }
+
+        executorService.shutdown();
+        executorService.awaitTermination(10, TimeUnit.SECONDS);
+
+        sut.insertOrUpdate(1L);
+        sut.insertOrUpdate(2L);
+
+        // then
+        // 결과 검증
+        Assertions.assertEquals(100L*threadCnt, sut.selectById(1L).point(), "값 일치 여부 체크");
+        Assertions.assertEquals(200L*threadCnt, sut.selectById(2L).point(), "값 일치 여부 체크");
     }
 
 }
